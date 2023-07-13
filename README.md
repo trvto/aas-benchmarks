@@ -5,7 +5,7 @@
 In the same directory:
 ```commandline
 git clone <this_repo_url> <local_benchmark_repo_dir>
-git clone <tket> <local_tket_repo_dir>
+git clone <tket_repo_url> <local_tket_repo_dir>
 ```
 then
 ```
