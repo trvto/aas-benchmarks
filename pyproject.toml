@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "phase-poly-benchmarks"
+version = "0.1.0"
+description = ""
+authors = ["Travis Thompson <travis.thompson@quantinuum.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+click = "^8.1.3"
+pytket-pyzx = "*"
+pyzx = "*"
+pytket = { path = "../tket/pytket", develop = false }
+
+
+[tool.poetry.scripts]
+pp_benchmark = "phase_poly_benchmarks.cli:main"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
