@@ -1,6 +1,8 @@
+import pathlib
+
 import click
 
-from .benchmarks import square_grid, line_arch
+from .benchmarks import square_grid, line_arch, qasm_bench, full_qasm_bench
 
 
 @click.group()
@@ -38,5 +40,31 @@ def line(n_qubits: int, n_strings: int, string_size_min_max: list[int]) -> None:
               pauli_string_max_size=string_size_min_max[1])
 
 
+@click.command(name="qasm")
+@click.option("-a", "--arch", "arch_type", type=str, default="grid")
+@click.option("-f", "--file", "file_name", type=str)
+def qasm(file_name: str, arch_type: str) -> None:
+    """Read myqlm binary circ file."""
+    if not pathlib.Path(file_name).exists():
+        print(f"Error: could not find file {file_name}")
+        return
+    print(f"Running benchmark")
+    qasm_bench(file_name, arch_type)
+
+
+@click.command(name="qasm-full")
+@click.option("-a", "--arch", "arch_type", type=str, default="grid")
+@click.option("-d", "--dir", "dir_name", type=str)
+def qasm_full(dir_name: str, arch_type: str) -> None:
+    """Read myqlm binary circ file."""
+    if not pathlib.Path(dir_name).is_dir():
+        print(f"Error: could not find directory {dir_name}")
+        return
+    print(f"Running benchmark")
+    full_qasm_bench(dir_name, arch_type)
+
+
 main.add_command(grid)
 main.add_command(line)
+main.add_command(qasm)
+main.add_command(qasm_full)

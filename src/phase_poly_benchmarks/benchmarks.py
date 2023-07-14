@@ -1,11 +1,17 @@
 import time
 from itertools import pairwise
+from multiprocessing import Process
+from math import ceil, sqrt
+from pathlib import Path
+from typing import Tuple
 
+from .read_qasm import qasm_filename_to_circuit
+from .result import BenchResult
 from pytket.circuit import Circuit, PauliExpBox, Qubit, Node, OpType  # type: ignore
 from pytket.architecture import Architecture, SquareGrid  # type: ignore
 from pytket.pauli import Pauli  # type: ignore
 from pytket.transform import Transform, CXConfigType, PauliSynthStrat  # type: ignore
-from pytket.passes import DefaultMappingPass, CXMappingPass  # type: ignore
+from pytket.passes import DefaultMappingPass, CXMappingPass, auto_rebase_pass  # type: ignore
 from pytket.placement import GraphPlacement
 from pytket.utils import compare_unitaries  # type: ignore
 from pytket.extensions.pyzx import (
@@ -16,20 +22,27 @@ from pyzx.routing import route_phase_poly as pyzx_route_phase_poly
 
 from random import randint, random, sample
 
+def get_line_arch(n_qbits: int) -> Architecture:
+    connections = [list(p) for p in pairwise([i for i in range(n_qbits)])]
+    return Architecture(connections)
+
 
 def square_grid(n_row: int, n_column: int, n_pauli_exp: int, pauli_string_min_size: int, pauli_string_max_size: int) -> None:
     arch = SquareGrid(n_row, n_column)
     circ = Circuit(n_row*n_column)
     [add_random_poly_exp_box(circ, pauli_string_min_size, pauli_string_max_size) for _ in range(n_pauli_exp)]
-    run_trafos(arch, circ)
+    results = run_trafos(arch, circ)
+    for result in results:
+        print(f"Method: {result.method_name}, time: {result.time}, cx: {result.ncx}, cx_depth: {result.cx_depth}")
 
 
 def line_arch(arch_size: int, n_pauli_exp: int,  pauli_string_min_size: int, pauli_string_max_size: int) -> None:
-    connections = [list(p) for p in pairwise([i for i in range(arch_size)])]
-    arch = Architecture(connections)
+    arch = get_line_arch(arch_size)
     circ = Circuit(arch_size)
     [add_random_poly_exp_box(circ, pauli_string_min_size, pauli_string_max_size) for _ in range(n_pauli_exp)]
-    run_trafos(arch, circ)
+    results = run_trafos(arch, circ)
+    for result in results:
+        print(f"Method: {result.method_name}, time: {result.time}, cx: {result.ncx}, cx_depth: {result.cx_depth}")
 
 
 def add_random_poly_exp_box(circ: Circuit, min_size: int, max_size: int) -> int:
@@ -53,33 +66,34 @@ def place_manually(arch: Architecture, circ: Circuit) -> None:
     circ.rename_units(rename_map)
 
 
-def run_trafos(arch: Architecture, circ: Circuit) -> None:
+def run_trafos(arch: Architecture, circ: Circuit) -> list[BenchResult]:
     circ2 = circ.copy()
     circ3 = circ.copy()
 
+    results = []
     start_time = time.process_time()
     place_manually(arch, circ)
     Transform.LazyAASPauliGraph(arch).apply(circ)
     time_elapsed = time.process_time() - start_time
-    print(f"LayzAASPauliGraph with internal done in {time_elapsed} seconds")
+    ncx, cxdepth = get_counts(circ)
+    results.append(BenchResult("lazy_aas", time_elapsed, ncx, cxdepth))
 
     start_time = time.process_time()
     place_manually(arch, circ2)
     Transform.LazyAASPauliGraph(arch, route_phase_poly).apply(circ2)
     time_elapsed = time.process_time() - start_time
-    print(f"LayzAASPauliGraph with pyzx done in {time_elapsed} seconds")
+    ncx, cxdepth = get_counts(circ2)
+    results.append(BenchResult("lazy_aas_pyzx", time_elapsed, ncx, cxdepth))
 
     start_time = time.process_time()
     graph_pl = GraphPlacement(arch)
     Transform.LazySynthesisePauliGraph().apply(circ3)
     CXMappingPass(arch, graph_pl).apply(circ3)
     time_elapsed = time.process_time() - start_time
-    print(f"LazySynthesisePauliGraph with routing done in {time_elapsed} seconds")
+    ncx, cxdepth = get_counts(circ3)
+    results.append(BenchResult("lazy_synth_pauli", time_elapsed, ncx, cxdepth))
 
-    print("Counts:")
-    print(f"  LazyAASPauliGraph (internal phase_poly) ->  {get_counts_string(circ)}")
-    print(f"  LazyAASPauliGraph (pyzx route_phase_poly) ->  {get_counts_string(circ2)}")
-    print(f"  LazySynthesisePauliGraph with routing ->  {get_counts_string(circ3)}")
+    return results
 
 
 def route_phase_poly(arch: Architecture, circ: Circuit) -> Circuit:
@@ -89,6 +103,32 @@ def route_phase_poly(arch: Architecture, circ: Circuit) -> Circuit:
     return routed_circ
 
 
-def get_counts_string(circ: Circuit) -> str:
+def get_counts(circ: Circuit) -> Tuple[int, int]:
     two_qb_gate = OpType.CX
-    return f"CX gates {circ.n_gates_of_type(two_qb_gate)}, CX depth: {circ.depth_by_type(two_qb_gate)}"
+    return int(circ.n_gates_of_type(two_qb_gate)), int(circ.depth_by_type(two_qb_gate))
+
+
+def get_square_grid(n_qubits: int) -> Architecture:
+    side_length = ceil(sqrt(n_qubits))
+    #print(f"Using {side_length}x{side_length} grid")
+    return SquareGrid(side_length, side_length)
+
+
+def qasm_bench(filename: str, arch_type: str) -> None:
+    circ = qasm_filename_to_circuit(filename)
+    arch = get_line_arch(circ.n_qubits) if arch_type == "line" else get_square_grid(circ.n_qubits)
+    rebase_pass = auto_rebase_pass({OpType.CX, OpType.H, OpType.Rz})
+    rebase_pass.apply(circ)
+    results = run_trafos(arch, circ)
+    for result in results:
+        print(f"file: {filename}, method: {result.method_name}, time: {result.time}, cx: {result.ncx}, cx_depth: {result.cx_depth}")
+
+
+def full_qasm_bench(data_path: str, arch_type: str) -> None:
+    for file in Path(data_path).iterdir():
+        p1 = Process(target=qasm_bench, args=(f"{file}", arch_type))
+        p1.start()
+        p1.join(timeout=60)
+        p1.terminate()
+        if p1.exitcode is None:
+            print(f"{file} timed out")
