@@ -69,31 +69,40 @@ def place_manually(arch: Architecture, circ: Circuit) -> None:
 def run_trafos(arch: Architecture, circ: Circuit) -> list[BenchResult]:
     circ2 = circ.copy()
     circ3 = circ.copy()
+    results = [
+        lazy_aas_run(arch, circ),
+        lazy_aas_pyzx(arch, circ2),
+        synth_pauli_route(arch, circ3),
+    ]
+    return results
 
-    results = []
-    start_time = time.process_time()
-    place_manually(arch, circ)
-    Transform.LazyAASPauliGraph(arch).apply(circ)
-    time_elapsed = time.process_time() - start_time
-    ncx, cxdepth = get_counts(circ)
-    results.append(BenchResult("lazy_aas", time_elapsed, ncx, cxdepth))
 
-    start_time = time.process_time()
-    place_manually(arch, circ2)
-    Transform.LazyAASPauliGraph(arch, route_phase_poly).apply(circ2)
-    time_elapsed = time.process_time() - start_time
-    ncx, cxdepth = get_counts(circ2)
-    results.append(BenchResult("lazy_aas_pyzx", time_elapsed, ncx, cxdepth))
-
+def synth_pauli_route(arch, circ3):
     start_time = time.process_time()
     graph_pl = GraphPlacement(arch)
     Transform.LazySynthesisePauliGraph().apply(circ3)
     CXMappingPass(arch, graph_pl).apply(circ3)
     time_elapsed = time.process_time() - start_time
     ncx, cxdepth = get_counts(circ3)
-    results.append(BenchResult("lazy_synth_pauli", time_elapsed, ncx, cxdepth))
+    return BenchResult("lazy_synth_pauli", time_elapsed, ncx, cxdepth)
 
-    return results
+
+def lazy_aas_pyzx(arch, circ2):
+    start_time = time.process_time()
+    place_manually(arch, circ2)
+    Transform.LazyAASPauliGraph(arch, route_phase_poly).apply(circ2)
+    time_elapsed = time.process_time() - start_time
+    ncx, cxdepth = get_counts(circ2)
+    return BenchResult("lazy_aas_pyzx", time_elapsed, ncx, cxdepth)
+
+
+def lazy_aas_run(arch, circ) -> BenchResult:
+    start_time = time.process_time()
+    place_manually(arch, circ)
+    Transform.LazyAASPauliGraph(arch).apply(circ)
+    time_elapsed = time.process_time() - start_time
+    ncx, cxdepth = get_counts(circ)
+    return BenchResult("lazy_aas", time_elapsed, ncx, cxdepth)
 
 
 def route_phase_poly(arch: Architecture, circ: Circuit) -> Circuit:
